@@ -58,6 +58,37 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function formatJstDateTime(value) {
+  if (!value) return "-";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return String(value || "-");
+  }
+
+  const parts = new Intl.DateTimeFormat("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const get = (type) => {
+    const part = parts.find((item) => item.type === type);
+    return part ? part.value : "";
+  };
+
+  return [
+    `${get("year")}/${get("month")}/${get("day")}`,
+    `${get("hour")}:${get("minute")}:${get("second")}`,
+  ].join(" ");
+}
+
 function truncate(text, max = 1000) {
   const value = String(text ?? "");
   if (value.length <= max) return value;
@@ -218,7 +249,7 @@ function buildScoreBookmarkletEmbed(payload) {
         value: truncate(diffText, 1000),
         inline: false,
       },
-      { name: "登録日時", value: String(payload.exported_at || "-"), inline: false },
+      { name: "登録日時", value: formatJstDateTime(payload.exported_at), inline: false },
     )
     .setFooter(buildFooter("PolarisChord ScoreTool / Supabase"))
     .setTimestamp(new Date());
@@ -239,7 +270,7 @@ function buildScoreBookmarkletErrorEmbed(payload) {
         value: truncate(String(payload.error_message || "-"), 1000),
         inline: false,
       },
-      { name: "発生日時", value: String(payload.exported_at || "-"), inline: false },
+      { name: "発生日時", value: formatJstDateTime(payload.exported_at), inline: false },
     )
     .setFooter(buildFooter("PolarisChord ScoreTool Error"))
     .setTimestamp(new Date());
@@ -283,7 +314,7 @@ function buildScoreMusicDataEmbed(payload) {
         value: splitLinesToFieldValue(labels),
         inline: false,
       },
-      { name: "実行日時", value: String(payload.executed_at || "-"), inline: false },
+      { name: "実行日時", value: formatJstDateTime(payload.executed_at), inline: false },
     )
     .setFooter(buildFooter("PolarisChord ScoreTool / Music Master"))
     .setTimestamp(new Date());
@@ -327,7 +358,11 @@ function buildScoreApdiffEmbed(payload) {
     .setTitle(hasDiff ? "📈 AP難易度マスタ 更新あり" : "✅ AP難易度マスタ 更新なし")
     .setColor(hasDiff ? 0x2ecc71 : 0x95a5a6)
     .setDescription(truncate(description, 4000))
-    .setFooter(buildFooter(`PolarisChord ScoreTool / AP Difficulty`))
+    .setFooter(
+      buildFooter(
+        `PolarisChord ScoreTool / AP Difficulty / 更新日時: ${formatJstDateTime(payload.executed_at || nowIso())}`
+      )
+    )
     .setTimestamp(new Date());
 }
 

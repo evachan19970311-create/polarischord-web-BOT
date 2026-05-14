@@ -213,9 +213,35 @@ function buildScoreBookmarkletEmbed(payload) {
 
   const color = isInitial ? 0x3498db : hasDiff ? 0x2ecc71 : 0x95a5a6;
 
-  const diffText = hasDiff
-    ? String(payload.diff_summary || "差分あり")
-    : "差分なし";
+  const fields = [
+    { name: "プレイヤー", value: String(payload.player_name || "-"), inline: true },
+    { name: "Crew ID", value: String(payload.crew_id || "-"), inline: true },
+    { name: "public_id", value: String(payload.public_id || "-"), inline: false },
+    { name: "登録種別", value: isInitial ? "新規登録" : "更新", inline: true },
+    { name: "楽曲数", value: String(payload.music_count ?? "-"), inline: true },
+  ];
+
+  if (!isInitial) {
+    fields.push({
+      name: "差分",
+      value: hasDiff ? "あり" : "なし",
+      inline: true,
+    });
+  }
+
+  fields.push(
+    {
+      name: "保存先",
+      value: [
+        "users / user_scores",
+        "user_privacy_settings",
+        "update_results",
+        payload.history_path ? "user_score_snapshots" : null,
+      ].filter(Boolean).join("\n"),
+      inline: false,
+    },
+    { name: "登録日時", value: formatJstDateTime(payload.exported_at), inline: false },
+  );
 
   return new EmbedBuilder()
     .setTitle(title)
@@ -227,30 +253,7 @@ function buildScoreBookmarkletEmbed(payload) {
           ? "既存ユーザーのスコアデータをSupabaseへ更新しました。"
           : "スコア登録は完了しました。前回との差分はありません。"
     )
-    .addFields(
-      { name: "プレイヤー", value: String(payload.player_name || "-"), inline: true },
-      { name: "Crew ID", value: String(payload.crew_id || "-"), inline: true },
-      { name: "public_id", value: String(payload.public_id || "-"), inline: false },
-      { name: "登録種別", value: isInitial ? "新規登録" : "更新", inline: true },
-      { name: "差分", value: hasDiff ? "あり" : "なし", inline: true },
-      { name: "楽曲数", value: String(payload.music_count ?? "-"), inline: true },
-      {
-        name: "保存先",
-        value: [
-          "users / user_scores",
-          "user_privacy_settings",
-          "update_results",
-          payload.history_path ? "user_score_snapshots" : null,
-        ].filter(Boolean).join("\n"),
-        inline: false,
-      },
-      {
-        name: "差分サマリー",
-        value: truncate(diffText, 1000),
-        inline: false,
-      },
-      { name: "登録日時", value: formatJstDateTime(payload.exported_at), inline: false },
-    )
+    .addFields(...fields)
     .setFooter(buildFooter("PolarisChord ScoreTool / Supabase"))
     .setTimestamp(new Date());
 }

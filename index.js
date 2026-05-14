@@ -113,33 +113,33 @@ function safeJson(value) {
   }
 }
 
-/* =========================================================
- * チャンネル振り分け
- * 3チャンネル構成を基本にしつつ、必要なら個別指定で上書き
- * ========================================================= */
-
 function resolveChannelId(source, eventType, level) {
-  if (level === "error") {
-    return DISCORD_CHANNEL_ERROR_LOG || null;
-  }
-
+  /*
+   * スコアツール:
+   * Supabase移行後は、通知種別ごとの細分化をやめて
+   * 通常通知 / エラー通知 の2チャンネル構成に統合する。
+   */
   if (source === "score_tool") {
-    if (eventType === "bookmarklet") {
-      return DISCORD_CHANNEL_SCORE_BOOKMARKLET || DISCORD_CHANNEL_SCORE_LOG || null;
+    if (level === "error") {
+      return DISCORD_CHANNEL_ERROR_LOG || null;
     }
-    if (eventType === "music_data") {
-      return DISCORD_CHANNEL_SCORE_MUSICDATA || DISCORD_CHANNEL_SCORE_LOG || null;
-    }
-    if (eventType === "apdiff") {
-      return DISCORD_CHANNEL_SCORE_APDIFF || DISCORD_CHANNEL_SCORE_LOG || null;
-    }
+
     return DISCORD_CHANNEL_SCORE_LOG || null;
   }
 
+  /*
+   * QAPサイト:
+   * 今回は既存運用を維持する。
+   */
   if (source === "qap_site") {
+    if (level === "error") {
+      return DISCORD_CHANNEL_ERROR_LOG || DISCORD_CHANNEL_QAP_LOG || null;
+    }
+
     if (eventType === "qap_summary_update") {
       return DISCORD_CHANNEL_QAP_SUMMARY || DISCORD_CHANNEL_QAP_LOG || null;
     }
+
     if (
       eventType === "qap_save" ||
       eventType === "qap_update" ||
@@ -148,10 +148,22 @@ function resolveChannelId(source, eventType, level) {
     ) {
       return DISCORD_CHANNEL_QAP_DOPST || DISCORD_CHANNEL_QAP_LOG || null;
     }
+
     return DISCORD_CHANNEL_QAP_LOG || null;
   }
 
-  return DISCORD_CHANNEL_ERROR_LOG || DISCORD_CHANNEL_SCORE_LOG || DISCORD_CHANNEL_QAP_LOG || null;
+  /*
+   * 不明なsource:
+   * errorならエラー通知、それ以外は通常通知へ逃がす。
+   */
+  if (level === "error") {
+    return DISCORD_CHANNEL_ERROR_LOG || null;
+  }
+
+  return DISCORD_CHANNEL_SCORE_LOG ||
+    DISCORD_CHANNEL_QAP_LOG ||
+    DISCORD_CHANNEL_ERROR_LOG ||
+    null;
 }
 
 /* =========================================================
@@ -163,37 +175,85 @@ function buildScoreBookmarkletEmbed(payload) {
   const hasDiff = Boolean(payload.has_diff);
 
   const title = isInitial
-    ? "🆕 新規ユーザーデータ登録"
+    ? "🆕 スコアツール 新規登録"
     : hasDiff
-      ? "📈 スコア更新検知"
-      : "📝 スコア更新なし";
+      ? "📈 スコアデータ更新"
+      : "✅ スコア登録完了";
 
   const color = isInitial ? 0x3498db : hasDiff ? 0x2ecc71 : 0x95a5a6;
+
+  const diffText = hasDiff
+    ? String(payload.diff_summary || "差分あり")
+    : "差分なし";
 
   return new EmbedBuilder()
     .setTitle(title)
     .setColor(color)
+    .setDescription(
+      isInitial
+        ? "新しいユーザーのスコアデータをSupabaseへ登録しました。"
+        : hasDiff
+          ? "既存ユーザーのスコアデータをSupabaseへ更新しました。"
+          : "スコア登録は完了しました。前回との差分はありません。"
+    )
     .addFields(
       { name: "プレイヤー", value: String(payload.player_name || "-"), inline: true },
       { name: "Crew ID", value: String(payload.crew_id || "-"), inline: true },
-      { name: "楽曲数", value: String(payload.music_count ?? 0), inline: true },
+      { name: "public_id", value: String(payload.public_id || "-"), inline: false },
+      { name: "登録種別", value: isInitial ? "新規登録" : "更新", inline: true },
       { name: "差分", value: hasDiff ? "あり" : "なし", inline: true },
-      { name: "履歴保存", value: payload.history_path ? "あり" : "なし", inline: true },
-      { name: "履歴JSON", value: String(payload.history_path || "-"), inline: false },
-      { name: "summary JSON", value: String(payload.summary_path || "-"), inline: false },
-      { name: "時刻", value: String(payload.exported_at || "-"), inline: false },
+      { name: "楽曲数", value: String(payload.music_count ?? "-"), inline: true },
+      {
+        name: "保存先",
+        value: [
+          "users / user_scores",
+          "user_privacy_settings",
+          "update_results",
+          payload.history_path ? "user_score_snapshots" : null,
+        ].filter(Boolean).join("\n"),
+        inline: false,
+      },
+      {
+        name: "差分サマリー",
+        value: truncate(diffText, 1000),
+        inline: false,
+      },
+      { name: "登録日時", value: String(payload.exported_at || "-"), inline: false },
     )
-    .setFooter(buildFooter("PolarisChord ScoreTool"))
+    .setFooter(buildFooter("PolarisChord ScoreTool / Supabase"))
+    .setTimestamp(new Date());
+}
+
+function buildScoreBookmarkletErrorEmbed(payload) {
+  return new EmbedBuilder()
+    .setTitle("❌ スコア登録エラー")
+    .setColor(0xed4245)
+    .setDescription("ブックマークレット実行中にエラーが発生しました。")
+    .addFields(
+      { name: "stage", value: String(payload.stage || "-"), inline: true },
+      { name: "プレイヤー", value: String(payload.player_name || "-"), inline: true },
+      { name: "Crew ID", value: String(payload.crew_id || "-"), inline: true },
+      { name: "public_id", value: String(payload.public_id || "-"), inline: false },
+      {
+        name: "エラー内容",
+        value: truncate(String(payload.error_message || "-"), 1000),
+        inline: false,
+      },
+      { name: "発生日時", value: String(payload.exported_at || "-"), inline: false },
+    )
+    .setFooter(buildFooter("PolarisChord ScoreTool Error"))
     .setTimestamp(new Date());
 }
 
 function buildScoreMusicDataEmbed(payload) {
   const diffType = String(payload.diff_type || "unknown");
+
   const titleMap = {
-    first_upload: "🆕 MusicData 初回作成",
-    updated: "📈 MusicData 更新あり",
-    no_diff: "📝 MusicData 更新なし",
+    first_upload: "🆕 楽曲マスタ 初回登録",
+    updated: "📈 楽曲マスタ 更新あり",
+    no_diff: "✅ 楽曲マスタ 更新なし",
   };
+
   const colorMap = {
     first_upload: 0x3498db,
     updated: 0x2ecc71,
@@ -205,19 +265,27 @@ function buildScoreMusicDataEmbed(payload) {
     .map((label) => "・" + String(label));
 
   return new EmbedBuilder()
-    .setTitle(titleMap[diffType] || `📦 MusicData: ${diffType}`)
+    .setTitle(titleMap[diffType] || `📦 楽曲マスタ更新: ${diffType}`)
     .setColor(colorMap[diffType] || 0x5865f2)
+    .setDescription(
+      payload.has_diff
+        ? "公式楽曲データとの差分を検知し、楽曲マスタを更新しました。"
+        : "公式楽曲データを確認しました。更新差分はありません。"
+    )
     .addFields(
-      { name: "JSON", value: String(payload.output_path || "-"), inline: false },
-      { name: "History", value: String(payload.history_path || "-"), inline: false },
+      { name: "保存先", value: "music_master / 関連マスタデータ", inline: false },
       { name: "楽曲数", value: String(payload.song_count ?? 0), inline: true },
       { name: "譜面数", value: String(payload.diff_count ?? 0), inline: true },
       { name: "差分", value: payload.has_diff ? "あり" : "なし", inline: true },
       { name: "追加 / 更新曲数", value: String(toArray(payload.changed_song_ids).length), inline: true },
-      { name: "追加 / 更新楽曲名(先頭20件)", value: splitLinesToFieldValue(labels), inline: false },
-      { name: "実行時刻", value: String(payload.executed_at || "-"), inline: false },
+      {
+        name: "追加 / 更新楽曲名（最大20件）",
+        value: splitLinesToFieldValue(labels),
+        inline: false,
+      },
+      { name: "実行日時", value: String(payload.executed_at || "-"), inline: false },
     )
-    .setFooter(buildFooter("PolarisChord MusicData Updater"))
+    .setFooter(buildFooter("PolarisChord ScoreTool / Music Master"))
     .setTimestamp(new Date());
 }
 
@@ -232,25 +300,34 @@ function buildScoreApdiffEmbed(payload) {
       return `・${title} [${diffName}] : ${oldValue} → ${newValue}`;
     });
 
+  const addedCount = Number(payload.added_count ?? 0);
+  const removedCount = Number(payload.removed_count ?? 0);
+  const changedCount = Number(payload.changed_count ?? 0);
+  const hasDiff = addedCount + removedCount + changedCount > 0;
+
   const description = [
-    `**ver**`,
+    hasDiff
+      ? "AP難易度マスタに更新差分があります。"
+      : "AP難易度マスタを確認しました。更新差分はありません。",
+    "",
+    "**バージョン**",
     `・旧: ${payload.old_ver ?? "-"}`,
     `・新: ${payload.new_ver ?? "-"}`,
-    ``,
-    `**差分件数**`,
-    `・追加: ${payload.added_count ?? 0}件`,
-    `・削除: ${payload.removed_count ?? 0}件`,
-    `・変更: ${payload.changed_count ?? 0}件`,
-    changedItems.length ? `` : null,
-    changedItems.length ? `**変更例（最大20件）**` : null,
+    "",
+    "**差分件数**",
+    `・追加: ${addedCount}件`,
+    `・削除: ${removedCount}件`,
+    `・変更: ${changedCount}件`,
+    changedItems.length ? "" : null,
+    changedItems.length ? "**変更例（最大20件）**" : null,
     changedItems.length ? changedItems.join("\n") : null,
   ].filter(Boolean).join("\n");
 
   return new EmbedBuilder()
-    .setTitle("AP難易度表 更新通知")
-    .setColor(0x58a6ff)
+    .setTitle(hasDiff ? "📈 AP難易度マスタ 更新あり" : "✅ AP難易度マスタ 更新なし")
+    .setColor(hasDiff ? 0x2ecc71 : 0x95a5a6)
     .setDescription(truncate(description, 4000))
-    .setFooter(buildFooter(`更新日時: ${payload.executed_at || nowIso()}`))
+    .setFooter(buildFooter(`PolarisChord ScoreTool / AP Difficulty`))
     .setTimestamp(new Date());
 }
 
@@ -395,14 +472,22 @@ function buildQapErrorEmbed(payload) {
 }
 
 function buildGenericEmbed(payload) {
+  const level = String(payload.level || "info").toLowerCase();
+  const isError = level === "error";
+
   return new EmbedBuilder()
-    .setTitle("🔔 通知")
-    .setColor(0x5865f2)
-    .setDescription("未定義の通知タイプです。")
+    .setTitle(isError ? "⚠️ 未定義エラー通知" : "🔔 未定義通知")
+    .setColor(isError ? 0xed4245 : 0x5865f2)
+    .setDescription("BOT側で専用Embedが定義されていない通知です。")
     .addFields(
       { name: "source", value: String(payload.source || "-"), inline: true },
       { name: "event_type", value: String(payload.event_type || "-"), inline: true },
-      { name: "payload", value: truncate(safeJson(payload), 1000), inline: false },
+      { name: "level", value: String(payload.level || "-"), inline: true },
+      {
+        name: "payload",
+        value: truncate(safeJson(payload), 1000),
+        inline: false,
+      },
     )
     .setFooter(buildFooter("PolarisChord Notification Bot"))
     .setTimestamp(new Date());
@@ -415,12 +500,19 @@ function buildEmbed(payload) {
   if (source === "score_tool" && eventType === "bookmarklet") {
     return buildScoreBookmarkletEmbed(payload);
   }
+  if (source === "score_tool" && eventType === "bookmarklet_error") {
+    return buildScoreBookmarkletErrorEmbed(payload);
+  }
   if (source === "score_tool" && eventType === "music_data") {
     return buildScoreMusicDataEmbed(payload);
   }
   if (source === "score_tool" && eventType === "apdiff") {
     return buildScoreApdiffEmbed(payload);
   }
+
+  /*
+   * QAP系は既存のまま維持
+   */
   if (source === "qap_site" && eventType === "qap_save") {
     return buildQapSaveEmbed(payload);
   }

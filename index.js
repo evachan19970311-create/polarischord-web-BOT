@@ -2,6 +2,7 @@
 
 const express = require("express");
 const crypto = require("crypto");
+const { createNotificationDeduplicator } = require("./notification-dedup");
 const {
   Client,
   GatewayIntentBits,
@@ -49,6 +50,7 @@ const client = new Client({
 });
 
 const queue = [];
+const deliverOnce = createNotificationDeduplicator();
 let is_sending = false;
 
 /* =========================================================
@@ -98,12 +100,6 @@ function truncate(text, max = 1000) {
 
 function toArray(value) {
   return Array.isArray(value) ? value : value == null ? [] : [value];
-}
-
-function maskToken(token) {
-  if (!token) return "-";
-  if (token.length <= 8) return "********";
-  return token.slice(0, 4) + "..." + token.slice(-4);
 }
 
 function verifyBearerToken(req) {
@@ -210,12 +206,16 @@ function buildScoreBookmarkletEmbed(payload) {
   const color = isInitial ? 0x3498db : hasDiff ? 0x2ecc71 : 0x95a5a6;
 
   const fields = [
-    { name: "プレイヤー", value: String(payload.player_name || "-"), inline: true },
-    { name: "Crew ID", value: String(payload.crew_id || "-"), inline: true },
-    { name: "public_id", value: String(payload.public_id || "-"), inline: false },
+    { name: "プレイヤー", value: truncate(payload.player_name || "-", 1000), inline: true },
+    { name: "Crew ID", value: truncate(payload.crew_id || "-", 1000), inline: true },
+    { name: "Public ID", value: truncate(payload.public_id || "-", 1000), inline: false },
     { name: "登録種別", value: isInitial ? "新規登録" : "更新", inline: true },
     { name: "楽曲数", value: String(payload.music_count ?? "-"), inline: true },
   ];
+
+  if (Number.isSafeInteger(payload.score_count) && payload.score_count >= 0) {
+    fields.push({ name: "譜面数", value: String(payload.score_count), inline: true });
+  }
 
   if (!isInitial) {
     fields.push({
@@ -260,10 +260,11 @@ function buildScoreBookmarkletErrorEmbed(payload) {
     .setColor(0xed4245)
     .setDescription("ブックマークレット実行中にエラーが発生しました。")
     .addFields(
-      { name: "stage", value: String(payload.stage || "-"), inline: true },
-      { name: "プレイヤー", value: String(payload.player_name || "-"), inline: true },
-      { name: "Crew ID", value: String(payload.crew_id || "-"), inline: true },
-      { name: "public_id", value: String(payload.public_id || "-"), inline: false },
+      { name: "処理", value: truncate(payload.stage_label || payload.stage || "-", 1000), inline: true },
+      { name: "プレイヤー", value: truncate(payload.player_name || "-", 1000), inline: true },
+      { name: "Crew ID", value: truncate(payload.crew_id || "-", 1000), inline: true },
+      { name: "Public ID", value: truncate(payload.public_id || "-", 1000), inline: false },
+      ...(payload.error_code ? [{ name: "エラーコード", value: truncate(payload.error_code, 1000), inline: true }] : []),
       {
         name: "エラー内容",
         value: truncate(String(payload.error_message || "-"), 1000),
@@ -941,6 +942,7 @@ async function sendNotification(payload) {
   const message = await channel.send({
     content: content || undefined,
     embeds: [embed],
+    ...(source === "score_tool" ? { allowedMentions: { parse: [] } } : {}),
   });
 
   return {
@@ -968,7 +970,9 @@ app.get("/health", (_req, res) => {
     logged_in: client.isReady(),
     bot_user: client.user ? client.user.tag : null,
     queue_length: queue.length,
-    token_hint: maskToken(DISCORD_NOTIFY_API_TOKEN),
+    revision: process.env.RENDER_GIT_COMMIT || null,
+    score_notifications_configured: Boolean(DISCORD_CHANNEL_SCORE_LOG),
+    score_error_notifications_configured: Boolean(DISCORD_CHANNEL_SCORE_ERROR_LOG || DISCORD_CHANNEL_SCORE_LOG),
     time: nowIso(),
   });
 });
@@ -1000,7 +1004,11 @@ app.post("/notify", async (req, res) => {
       });
     }
 
-    const result = await enqueueMessage(() => sendNotification(payload));
+    if (payload.event_id !== undefined && (typeof payload.event_id !== "string" || !/^[a-zA-Z0-9_:.-]{1,128}$/.test(payload.event_id))) {
+      return res.status(400).json({ ok: false, error: "Invalid event_id" });
+    }
+    const key = payload.event_id ? `${source}:${eventType}:${payload.event_id}` : null;
+    const result = await deliverOnce(key, () => enqueueMessage(() => sendNotification(payload)));
 
     return res.json({
       ok: true,

@@ -5,6 +5,7 @@
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",
+    "test": "node --test test/*.test.js",
     "register": "node register.js"
   },
   "dependencies": {

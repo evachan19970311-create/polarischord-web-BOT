@@ -65,6 +65,30 @@ test("real notify route authenticates, routes channels, validates embeds and ded
   assert.equal((await post({...qap,log:{...qap.log,id:293,success:false,error_message:'保存できませんでした'}})).status,200);
   assert.equal(messages[3].id,'qap-error-channel');
   assert.equal(messages[3].embed.title,'❌ PolaQ｜追加エラー');
+  const crewFill = {
+    ...qap,
+    log: {
+      id: 294,
+      action: 'qap_member_crewid_fill',
+      admin_display_name: '管理者',
+      admin_id: 'hidden',
+      created_at: '2026-11-06T14:58:13Z',
+      success: true,
+      detail: {crew_id: '12345678', target_names: ['A', 'B'], updated_member_count: 3, updated_record_count: 2},
+    },
+  };
+  assert.equal((await post(crewFill)).status, 200);
+  assert.equal(messages[4].id, 'qap-channel');
+  const fillEmbed = messages[4].embed;
+  assert.equal(fillEmbed.title, '🔗 PolaQ｜Crew ID補完');
+  assert.deepEqual(fillEmbed.fields.map(field => field.value), [
+    '12345678', '・A\n・B', 'メンバー：3人\nQAPデータ：2件',
+    '管理アカウント：管理者\n実行日時：2026/11/06 23:58:13\nlogid：294',
+  ]);
+  assert.equal((await post({...crewFill, log: {...crewFill.log, success: false}})).status, 200);
+  assert.equal(messages[5].id, 'qap-error-channel');
+  assert.equal(messages[5].embed.title, '❌ PolaQ｜Crew ID補完エラー');
+  assert.equal(messages[5].embed.fields.at(-1).name, '調査用情報');
   const health=await(await fetch(origin+'/health')).json();
   assert.equal(health.revision,'fixture-revision');assert.equal(health.score_notifications_configured,true);
   assert.doesNotMatch(JSON.stringify(health),/fixture-api-token|fixture-bot|token_hint/);

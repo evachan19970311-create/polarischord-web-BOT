@@ -2,7 +2,7 @@
 
 const express = require("express");
 const crypto = require("crypto");
-const { buildScoreEmbed, buildQapRecordEmbed } = require("./notification-formatters");
+const { buildScoreEmbed, buildQapRecordEmbed, buildQapCrewIdFillEmbed } = require("./notification-formatters");
 const { createNotificationDeduplicator } = require("./notification-dedup");
 const {
   Client,
@@ -431,8 +431,6 @@ function formatQapAdminActionLabel(action) {
       return "QAPデータ編集";
     case "qap_record_delete":
       return "QAPデータ削除";
-    case "qap_member_crewid_fill":
-      return "CrewID補完";
     default:
       return String(action || "-");
   }
@@ -455,11 +453,6 @@ function getQapAdminActivityStyle(action) {
         title: "🗑️ QAPデータ削除",
         color: 0xed4245,
       };
-    case "qap_member_crewid_fill":
-      return {
-        title: "🔗 CrewID補完",
-        color: 0x00d4ff,
-      };
     default:
       return {
         title: "🛠️ QAP管理操作",
@@ -471,6 +464,7 @@ function getQapAdminActivityStyle(action) {
 function buildQapAdminActivityEmbed(payload) {
   const log = payload.log || {};
   const action = String(log.action || payload.action || "");
+  if (action === "qap_member_crewid_fill") return buildQapCrewIdFillEmbed(payload);
   if (["qap_record_create", "qap_record_update", "qap_record_delete"].includes(action) || log.success === false) return buildQapRecordEmbed(payload);
   const style = getQapAdminActivityStyle(action);
 
@@ -498,38 +492,11 @@ function buildQapAdminActivityEmbed(payload) {
     },
   ];
 
-  if (action === "qap_member_crewid_fill") {
-    const targetNames = toArray(detail.target_names).map(
-      (name) => `・${String(name)}`,
-    );
-
-    fields.push(
-      {
-        name: "補完CrewID",
-        value: String(detail.crew_id || "-"),
-        inline: true,
-      },
-      {
-        name: "更新件数",
-        value: [
-          `メンバー: ${detail.updated_member_count ?? 0}`,
-          `QAPデータ: ${detail.updated_record_count ?? 0}`,
-        ].join("\n"),
-        inline: true,
-      },
-      {
-        name: "対象プレイヤー名",
-        value: splitLinesToFieldValue(targetNames),
-        inline: false,
-      },
-    );
-  } else {
-    fields.push({
-      name: "詳細",
-      value: truncate(safeJson(detail), 1000),
-      inline: false,
-    });
-  }
+  fields.push({
+    name: "詳細",
+    value: truncate(safeJson(detail), 1000),
+    inline: false,
+  });
 
   if (log.id != null) {
     fields.push({

@@ -81,6 +81,7 @@ const STAGES={
   prepare_atomic_import:"登録データの準備",commit_atomic_import:"スコアの保存",forward_upload:"登録サーバーとの通信",
   notify_qap_admin_activity:"管理操作の通知",run_qap_summary_update:"集計データの更新",upload_qap_jackets_to_github:"ジャケット画像の更新",
   qap_record_create:"QAPデータの追加",qap_record_update:"QAPデータの編集",qap_record_delete:"QAPデータの削除",
+  qap_member_crewid_fill:"Crew ID補完",
 };
 function errorDetails(payload,log={}) {
   const rawStage=line(payload.stage || log.action);
@@ -114,4 +115,28 @@ function buildQapRecordEmbed(payload,kind) {
   return makeEmbed(`${error?"❌":{create:"🆕",update:"✏️",delete:"🗑️"}[operation]} PolaQ｜${title}`,error?0xed4245:{create:0x57f287,update:0xfee75c,delete:0xed4245}[operation],fields,"PolaQ");
 }
 
-module.exports={buildScoreEmbed,buildQapRecordEmbed,dateTime};
+function buildQapCrewIdFillEmbed(payload) {
+  const log = payload.log || {};
+  const detail = log.detail || {};
+  const error = log.success === false || payload.level === "error";
+  const targets = Array.isArray(detail.target_names) ? detail.target_names.map(line).filter(Boolean) : [];
+  const fields = [
+    field(error ? "補完予定のCrew ID" : "補完したCrew ID", line(detail.crew_id)),
+    field("対象プレイヤー", targets.map(name => `・${name}`).join("\n")),
+  ];
+
+  if (error) {
+    fields.push(field("エラー内容", payload.error_message || log.error_message || "Crew IDを補完できませんでした。"));
+  } else {
+    fields.push(field("更新件数", [
+      `メンバー：${detail.updated_member_count ?? 0}人`,
+      `QAPデータ：${detail.updated_record_count ?? 0}件`,
+    ].join("\n")));
+  }
+
+  fields.push(operations(payload, log, error));
+  if (error) fields.push(errorDetails(payload, log));
+  return makeEmbed(error ? "❌ PolaQ｜Crew ID補完エラー" : "🔗 PolaQ｜Crew ID補完", error ? 0xed4245 : 0x00d4ff, fields, "PolaQ");
+}
+
+module.exports={buildScoreEmbed,buildQapRecordEmbed,buildQapCrewIdFillEmbed,dateTime};

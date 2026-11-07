@@ -2,6 +2,7 @@
 
 const express = require("express");
 const crypto = require("crypto");
+const { buildScoreEmbed, buildQapRecordEmbed } = require("./notification-formatters");
 const { createNotificationDeduplicator } = require("./notification-dedup");
 const {
   Client,
@@ -193,88 +194,9 @@ function resolveChannelId(source, eventType, level) {
  * Embedビルダー
  * ========================================================= */
 
-function buildScoreBookmarkletEmbed(payload) {
-  const isInitial = Boolean(payload.is_initial);
-  const hasDiff = Boolean(payload.has_diff);
+function buildScoreBookmarkletEmbed(payload) { return buildScoreEmbed(payload); }
 
-  const title = isInitial
-    ? "🆕 スコアツール 新規登録"
-    : hasDiff
-      ? "📈 スコアデータ更新"
-      : "✅ スコア登録完了";
-
-  const color = isInitial ? 0x3498db : hasDiff ? 0x2ecc71 : 0x95a5a6;
-
-  const fields = [
-    { name: "プレイヤー", value: truncate(payload.player_name || "-", 1000), inline: true },
-    { name: "Crew ID", value: truncate(payload.crew_id || "-", 1000), inline: true },
-    { name: "Public ID", value: truncate(payload.public_id || "-", 1000), inline: false },
-    { name: "登録種別", value: isInitial ? "新規登録" : "更新", inline: true },
-    { name: "楽曲数", value: String(payload.music_count ?? "-"), inline: true },
-  ];
-
-  if (Number.isSafeInteger(payload.score_count) && payload.score_count >= 0) {
-    fields.push({ name: "譜面数", value: String(payload.score_count), inline: true });
-  }
-
-  if (!isInitial) {
-    fields.push({
-      name: "差分",
-      value: hasDiff ? "あり" : "なし",
-      inline: true,
-    });
-  }
-
-  fields.push(
-    {
-      name: "保存先",
-      value: [
-        "users / user_scores",
-        "user_privacy_settings",
-        "update_results",
-        payload.snapshot_id || payload.history_path ? "user_score_snapshots" : null,
-      ].filter(Boolean).join("\n"),
-      inline: false,
-    },
-    { name: "登録日時", value: formatJstDateTime(payload.exported_at), inline: false },
-  );
-
-  return new EmbedBuilder()
-    .setTitle(title)
-    .setColor(color)
-    .setDescription(
-      isInitial
-        ? "新しいユーザーのスコアデータをSupabaseへ登録しました。"
-        : hasDiff
-          ? "既存ユーザーのスコアデータをSupabaseへ更新しました。"
-          : "スコア登録は完了しました。前回との差分はありません。"
-    )
-    .addFields(...fields)
-    .setFooter(buildFooter("PolarisChord ScoreTool / Supabase"))
-    .setTimestamp(new Date());
-}
-
-function buildScoreBookmarkletErrorEmbed(payload) {
-  return new EmbedBuilder()
-    .setTitle("❌ スコア登録エラー")
-    .setColor(0xed4245)
-    .setDescription("ブックマークレット実行中にエラーが発生しました。")
-    .addFields(
-      { name: "処理", value: truncate(payload.stage_label || payload.stage || "-", 1000), inline: true },
-      { name: "プレイヤー", value: truncate(payload.player_name || "-", 1000), inline: true },
-      { name: "Crew ID", value: truncate(payload.crew_id || "-", 1000), inline: true },
-      { name: "Public ID", value: truncate(payload.public_id || "-", 1000), inline: false },
-      ...(payload.error_code ? [{ name: "エラーコード", value: truncate(payload.error_code, 1000), inline: true }] : []),
-      {
-        name: "エラー内容",
-        value: truncate(String(payload.error_message || "-"), 1000),
-        inline: false,
-      },
-      { name: "発生日時", value: formatJstDateTime(payload.exported_at), inline: false },
-    )
-    .setFooter(buildFooter("PolarisChord ScoreTool Error"))
-    .setTimestamp(new Date());
-}
+function buildScoreBookmarkletErrorEmbed(payload) { return buildScoreEmbed(payload, true); }
 
 function buildScoreMusicDataEmbed(payload) {
   const diffType = String(payload.diff_type || "unknown");
@@ -366,33 +288,7 @@ function buildScoreApdiffEmbed(payload) {
     .setTimestamp(new Date());
 }
 
-function buildQapSaveEmbed(payload) {
-  const record = payload.record || {};
-  const members = toArray(record.members).map((member) => {
-    const name = String(member && member.name || "-").trim() || "-";
-    const crewid = String(member && member.crewid || "-").trim() || "-";
-    return `・${name} / ${crewid}`;
-  });
-
-  return new EmbedBuilder()
-    .setTitle("✅ QAPデータ登録完了")
-    .setColor(0x57f287)
-    .addFields(
-      { name: "日付", value: String(record.display_date || "-"), inline: true },
-      { name: "曲名", value: String(record.music_title || "-"), inline: true },
-      { name: "難易度", value: String(record.diff || "-").toUpperCase(), inline: true },
-      { name: "プレイヤー", value: splitLinesToFieldValue(members), inline: false },
-      {
-        name: "GitHub",
-        value:
-          "qap_data: " + (payload.qap_data_commit_sha ? String(payload.qap_data_commit_sha).slice(0, 7) : "-") + "\n" +
-          "summary: " + (payload.qap_summary_commit_sha ? String(payload.qap_summary_commit_sha).slice(0, 7) : "-"),
-        inline: false,
-      },
-    )
-    .setFooter(buildFooter("PolarisChord QAP Web"))
-    .setTimestamp(new Date());
-}
+function buildQapSaveEmbed(payload) { return buildQapRecordEmbed(payload, "create"); }
 
 function buildQapSummaryEmbed(payload) {
   const results = Array.isArray(payload.results) ? payload.results : [];
@@ -523,86 +419,9 @@ function buildQapJacketUploadEmbed(payload) {
     .setTimestamp(new Date());
 }
 
-function buildQapUpdateEmbed(payload) {
-  const beforeRecord = payload.before_record || {};
-  const afterRecord = payload.after_record || {};
+function buildQapUpdateEmbed(payload) { return buildQapRecordEmbed(payload, "update"); }
 
-  return new EmbedBuilder()
-    .setTitle("✏️ QAPデータ編集完了")
-    .setColor(0xfee75c)
-    .addFields(
-      { name: "曲名", value: String(beforeRecord.music_title || "-"), inline: true },
-      { name: "難易度", value: String(beforeRecord.diff || "-").toUpperCase(), inline: true },
-      {
-        name: "日付",
-        value: `${beforeRecord.display_date || "-"} → ${afterRecord.display_date || "-"}`,
-        inline: false,
-      },
-    )
-    .setFooter(buildFooter("PolarisChord QAP Web"))
-    .setTimestamp(new Date());
-}
-
-function buildQapDeleteEmbed(payload) {
-  const record = payload.record || {};
-  const members = toArray(record.members).map((member) => {
-    const name = String(member && member.name || "-").trim() || "-";
-    const crewid = String(member && member.crewid || "-").trim() || "-";
-    return `・${name} / ${crewid}`;
-  });
-
-  return new EmbedBuilder()
-    .setTitle("🗑️ QAPデータ削除完了")
-    .setColor(0xed4245)
-    .addFields(
-      { name: "日付", value: String(record.display_date || "-"), inline: true },
-      { name: "曲名", value: String(record.music_title || "-"), inline: true },
-      { name: "難易度", value: String(record.diff || "-").toUpperCase(), inline: true },
-      { name: "プレイヤー", value: splitLinesToFieldValue(members), inline: false },
-      {
-        name: "GitHub",
-        value:
-          "qap_data: " + (payload.qap_data_commit_sha ? String(payload.qap_data_commit_sha).slice(0, 7) : "-") + "\n" +
-          "summary: " + (payload.qap_summary_commit_sha ? String(payload.qap_summary_commit_sha).slice(0, 7) : "-"),
-        inline: false,
-      },
-    )
-    .setFooter(buildFooter("PolarisChord QAP Web"))
-    .setTimestamp(new Date());
-}
-
-function formatQapMemberList(record) {
-  const members = toArray(record && record.members).map((member) => {
-    const index =
-      member && member.member_index != null
-        ? Number(member.member_index) + 1
-        : null;
-
-    const name =
-      String(
-        (member && (member.name || member.player_name)) || "-"
-      ).trim() || "-";
-
-    const crewid =
-      String(
-        (member && (member.crewid || member.crew_id)) || "-"
-      ).trim() || "-";
-
-    return `・${index ? index + ". " : ""}${name} / ${crewid}`;
-  });
-
-  return splitLinesToFieldValue(members, 1000);
-}
-
-function formatQapRecordSummary(record) {
-  if (!record) return "-";
-
-  return [
-    `曲名: ${record.music_title || "-"}`,
-    `難易度: ${String(record.diff || "-").toUpperCase()}`,
-    `日付: ${record.display_date || "-"}`,
-  ].join("\n");
-}
+function buildQapDeleteEmbed(payload) { return buildQapRecordEmbed(payload, "delete"); }
 
 function formatQapAdminActionLabel(action) {
   switch (String(action || "")) {
@@ -652,10 +471,9 @@ function getQapAdminActivityStyle(action) {
 function buildQapAdminActivityEmbed(payload) {
   const log = payload.log || {};
   const action = String(log.action || payload.action || "");
+  if (["qap_record_create", "qap_record_update", "qap_record_delete"].includes(action) || log.success === false) return buildQapRecordEmbed(payload);
   const style = getQapAdminActivityStyle(action);
 
-  const beforeData = log.before_data || null;
-  const afterData = log.after_data || null;
   const detail = log.detail || {};
 
   const adminName = String(log.admin_display_name || "-");
@@ -680,59 +498,7 @@ function buildQapAdminActivityEmbed(payload) {
     },
   ];
 
-  if (action === "qap_record_create") {
-    fields.push(
-      {
-        name: "追加データ",
-        value: formatQapRecordSummary(afterData),
-        inline: false,
-      },
-      {
-        name: "プレイヤー",
-        value: formatQapMemberList(afterData),
-        inline: false,
-      },
-    );
-  } else if (action === "qap_record_update") {
-    fields.push(
-      {
-        name: "変更前",
-        value: formatQapRecordSummary(beforeData),
-        inline: true,
-      },
-      {
-        name: "変更後",
-        value: formatQapRecordSummary(afterData),
-        inline: true,
-      },
-      {
-        name: "変更後プレイヤー",
-        value: formatQapMemberList(afterData),
-        inline: false,
-      },
-    );
-
-    if (detail && detail.music_changed === true) {
-      fields.push({
-        name: "楽曲/難易度変更",
-        value: `${detail.old_key || "-"} → ${detail.new_key || "-"}`,
-        inline: false,
-      });
-    }
-  } else if (action === "qap_record_delete") {
-    fields.push(
-      {
-        name: "削除データ",
-        value: formatQapRecordSummary(beforeData),
-        inline: false,
-      },
-      {
-        name: "プレイヤー",
-        value: formatQapMemberList(beforeData),
-        inline: false,
-      },
-    );
-  } else if (action === "qap_member_crewid_fill") {
+  if (action === "qap_member_crewid_fill") {
     const targetNames = toArray(detail.target_names).map(
       (name) => `・${String(name)}`,
     );
@@ -781,35 +547,7 @@ function buildQapAdminActivityEmbed(payload) {
     .setTimestamp(new Date());
 }
 
-function buildQapErrorEmbed(payload) {
-  const record = payload.payload && payload.payload.record ? payload.payload.record : null;
-  const fields = [
-    { name: "stage", value: String(payload.stage || "-"), inline: true },
-    { name: "error", value: truncate(String(payload.error_message || "-"), 1000), inline: false },
-  ];
-
-  if (record) {
-    const members = toArray(record.members).map((member) => {
-      const name = String(member && member.name || "-").trim() || "-";
-      const crewid = String(member && member.crewid || "-").trim() || "-";
-      return `・${name} / ${crewid}`;
-    });
-
-    fields.push(
-      { name: "日付", value: String(record.display_date || "-"), inline: true },
-      { name: "曲名", value: String(record.music_title || "-"), inline: true },
-      { name: "難易度", value: String(record.diff || "-").toUpperCase(), inline: true },
-      { name: "プレイヤー", value: splitLinesToFieldValue(members), inline: false },
-    );
-  }
-
-  return new EmbedBuilder()
-    .setTitle("❌ QAPデータ登録エラー")
-    .setColor(0xed4245)
-    .addFields(fields)
-    .setFooter(buildFooter("PolarisChord QAP Web"))
-    .setTimestamp(new Date());
-}
+function buildQapErrorEmbed(payload) { return buildQapRecordEmbed(payload, "error"); }
 
 function buildGenericEmbed(payload) {
   const level = String(payload.level || "info").toLowerCase();
@@ -924,7 +662,7 @@ function sleep(ms) {
 async function sendNotification(payload) {
   const source = normalizeSource(payload.source);
   const eventType = normalizeEventType(payload.event_type);
-  const level = String(payload.level || "").toLowerCase();
+  const level = (source === "qap_site" && (eventType === "qap_error" || payload.log?.success === false)) || (source === "score_tool" && eventType === "bookmarklet_error") ? "error" : String(payload.level || "").toLowerCase();
 
   const channelId = resolveChannelId(source, eventType, level);
   if (!channelId) {
